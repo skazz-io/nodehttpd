@@ -9,7 +9,9 @@ var config = {
     port: 8080,
     threads: cpus().length,
     defaultFile: 'index.html',
-    allowHidden: false,
+    checkHidden: true,
+    checkAccepts: true,
+    checkRootMount: true,
     mime: {
         '.html': 'text/html',
         '.css': 'text/css',
@@ -52,8 +54,24 @@ if (config.port != 8080 && config.corsHeaders && config.corsHeaders['Access-Cont
     }
 }
 
+function mimeAcceptCheck(mime, accept) {
+    return config.checkAccepts && accept &&
+        accept.indexOf('*/*') == -1 &&
+        accept.indexOf(`${mime.split('/')[0]}/*`) == -1 &&
+        accept.indexOf(mime) == -1;
+}
+
+if (config.checkRootMount && !config.wwwroot) {
+    throw 'config.wwwroot must be set, even if it is current directory with a dot.';
+}
+
 const chroot = path.resolve(config.wwwroot);
 const defaultExt = path.extname(config.defaultFile);
+const hiddenCheck = new RegExp(/\/\./);
+
+if (config.checkRootMount && chroot == path.sep) {
+    throw 'Cannot set wwwroot to system root without checkRootMount set to false.';
+}
 
 if (config.threads > 0) {
     if (cluster.isMaster) {
@@ -109,6 +127,10 @@ http.createServer(async function (req, res) {
 
         url = new URL(req.url, `http://${host}`);
 
+        if (config.checkHidden && hiddenCheck.test(url.pathname)) {
+            throw 404;
+        }
+
         let localPath = path.resolve(path.join(config.wwwroot, url.pathname));
 
         if (!localPath.startsWith(chroot)) {
@@ -126,6 +148,10 @@ http.createServer(async function (req, res) {
 
         if (!localMime) {
             throw 404;
+        }
+
+        if (mimeAcceptCheck(localMime, req.headers.accept)) {
+            throw 406;
         }
         
         let stats = await fs.stat(localPath);
@@ -168,7 +194,59 @@ http.createServer(async function (req, res) {
             error = err;
         }
     } finally {
-        try { res.end(); } catch (err) { error = error ? [ error, err ] : err; }
+        try {
+            if (!res.headersSent) {
+                if (req.method == 'HEAD' || req.statusCode == 204) {
+                    res.writeHead(res.statusCode);
+                } else {
+                    await new Promise((resolve, reject) => {
+                        var body = null;
+                        var msg = http.STATUS_CODES[res.statusCode] || null;
+                        var code = Number(res.statusCode);
+
+                        if (mimeAcceptCheck('application/json', req.headers.accept)) {
+                            body = `{"httpCode":${code},"httpMessage":"${msg}"}`
+                            res.setHeader('Content-Type', 'application/json');
+                        } else if (mimeAcceptCheck('text/plain', req.headers.accept)) {
+                            body = msg;
+                            res.setHeader('Content-Type', 'text/plain');
+                        } else if (mimeAcceptCheck('text/html', req.headers.accept)) {
+                            body = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><title>${msg}</title><meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0" /></head><body><h1>HTTP ${code} - ${msg}</h1></body>`
+                            res.setHeader('Content-Type', 'text/html');
+                        }
+
+                        if (body) {
+                            res.setHeader('Content-Length', Buffer.byteLength(body));
+                        }
+
+                        res.writeHead(res.statusCode);
+                        
+                        if (!body) {
+                            resolve();
+                            return;
+                        }
+
+                        res.write(body, function (err) {
+                            if (err) { reject(err); } else { resolve(); }
+                        });
+                    });
+                }
+            }
+        } catch (err) {
+            error = error ? [ error, err ] : err;
+        }
+        
+        try { 
+            res.end();
+        } catch (err) { 
+            if (!error) {
+                error = err;
+            } else if (Array.isArray(error)) {
+                error.push(err);
+            } else {
+                error = [ error, err ];
+            }
+        }
 
         var end = Date.now();
         var duration = end - start;
