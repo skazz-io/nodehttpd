@@ -1,9 +1,12 @@
 const http = require('http');
 const path = require('path');
 const { promises: fs, createReadStream } = require('fs');
+const cluster = require('cluster');
+const { cpus } = require('os');
 
 const wwwroot = process.env.NODE_HTTP_ROOT ? process.env.NODE_HTTP_ROOT : './';
 const port = process.env.NODE_HTTP_PORT ? Number(process.env.NODE_HTTP_PORT) : 8080;
+const threads = process.env.NODE_HTTP_THREADS ? Number(process.env.NODE_HTTP_THREADS) : cpus().length;
 
 const defaultFile = 'index.html';
 const mime = {
@@ -40,6 +43,25 @@ const corsHeaders = {
 
 const chroot = path.resolve(wwwroot);
 const defaultExt = path.extname(defaultFile);
+
+if (cluster.isMaster) {
+    console.log(`Server starting on port: ${port}`)
+    
+    cluster.on('fork', function(worker) {
+        console.log('worker started', worker.process.pid)
+    });
+
+    cluster.on('exit', function(worker, code, signal) {
+        console.log('worker died', worker.process.pid, code, signal);
+        cluster.fork();
+    });
+
+    for (var i = 0; i < threads; i++) {
+        cluster.fork({ NODE_CHILD: i });
+    }
+
+    return;
+}
 
 http.createServer(async function (req, res) {
     var start = Date.now();
