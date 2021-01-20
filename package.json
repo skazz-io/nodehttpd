@@ -1,0 +1,30 @@
+{
+  "name": "nodehttpd",
+  "version": "1.0.0",
+  "description": "NodeJS HTTP Server",
+  "main": "src/nodehttpd.js",
+  "bin": "src/nodehttpd.js",
+  "scripts": {
+    "build": "npm install",
+    "start": "NODE_HTTP_ROOT=./example/static node ./src/nodehttpd"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skazz-io/nodehttpd.git"
+  },
+  "keywords": [
+    "node",
+    "nodejs",
+    "javascript",
+    "http",
+    "httpd",
+    "server",
+    "static"
+  ],
+  "author": "SkAzZ",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/skazz-io/nodehttpd/issues"
+  },
+  "homepage": "https://github.com/skazz-io/nodehttpd#readme"
+}

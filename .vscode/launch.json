@@ -1,0 +1,18 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "pwa-chrome",
+            "request": "launch",
+            "name": "Open example static site",
+            "url": "http://127.0.0.1:8080",
+            "server":{
+                "program": "./src/nodehttpd.js",
+                "env": {
+                    "NODE_HTTP_PORT": "8080",
+                    "NODE_HTTP_ROOT": "./example/static"
+                }
+            }
+        }
+    ]
+}
