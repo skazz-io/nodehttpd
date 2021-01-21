@@ -12,6 +12,9 @@ var config = {
     checkHidden: true,
     checkAccepts: true,
     checkRootMount: true,
+    noLog: false,
+    textLog: false,
+    workerLog: false,
     mime: {
         '.html': 'text/html',
         '.css': 'text/css',
@@ -54,12 +57,6 @@ if (config.port != 8080 && config.corsHeaders && config.corsHeaders['Access-Cont
     }
 }
 
-function mimeAcceptCheck(mime, accept) {
-    return config.checkAccepts && accept &&
-        accept.indexOf('*/*') == -1 &&
-        accept.indexOf(`${mime.split('/')[0]}/*`) == -1 &&
-        accept.indexOf(mime) == -1;
-}
 
 if (config.checkRootMount && !config.wwwroot) {
     throw 'config.wwwroot must be set, even if it is current directory with a dot.';
@@ -73,18 +70,57 @@ if (config.checkRootMount && chroot == path.sep) {
     throw 'Cannot set wwwroot to system root without checkRootMount set to false.';
 }
 
+function mimeAcceptCheck(mime, accept) {
+    return config.checkAccepts && accept &&
+        accept.indexOf('*/*') == -1 &&
+        accept.indexOf(`${mime.split('/')[0]}/*`) == -1 &&
+        accept.indexOf(mime) == -1;
+}
+
+var writeLog = function (message, ...optionalParams) {
+    console.log(message, ...optionalParams);
+};
+var writeHost = function (message, ...optionalParams) {
+    console.warn(`${new Date().toISOString()}: ${message}`, ...optionalParams)
+};
+var sendLog = function (message) {
+    process.send(JSON.stringify(message));
+};
+var recieveLog = function (message) {
+    writeLog(JSON.parse(message));
+};
+
+if (config.textLog) {
+    writeLog = function (message, ...optionalParamse) {
+        console.log(JSON.stringify(message), ...optionalParamse);
+    };
+    recieveLog = function (message) {
+        console.log(message);
+    };
+}
+
+if (config.workerLog) {
+    sendLog = writeLog;
+}
+
 if (config.threads > 0) {
     if (cluster.isMaster) {
-        console.log(`Server starting on port ${config.port} with ${config.threads} workers.`)
+        writeHost(`Server starting on port ${config.port} with ${config.threads} workers.`)
 
         cluster.on('fork', function(worker) {
-            console.log('worker started', worker.process.pid)
+            writeHost('worker started', worker.process.pid)
         });
 
         cluster.on('exit', function(worker, code, signal) {
-            console.log('worker died', worker.process.pid, code, signal);
+            writeHost('worker died', worker.process.pid, code, signal);
             cluster.fork();
         });
+
+        if (!config.workerLog && !config.noLog) {
+            cluster.on('message', function (worker, message, handle) {
+                recieveLog(message);
+            });
+        }
 
         for (var i = 0; i < config.threads; i++) {
             cluster.fork({ NODE_CHILD: i });
@@ -93,8 +129,8 @@ if (config.threads > 0) {
         return;
     }
 } else {
-    console.log(`Server starting on port ${config.port} singlethreaded.`)
-    sendLog = console.log;
+    writeHost(`Server starting on port ${config.port} singlethreaded.`)
+    sendLog = writeLog;
 }
 
 http.createServer(async function (req, res) {
@@ -103,6 +139,18 @@ http.createServer(async function (req, res) {
     var error = null;
 
     try {
+        let host = `${req.socket.localAddress}:${req.socket.localPort}`;
+
+        if (req.headers.host) {
+            host = req.headers.host;
+        }
+
+        url = new URL(req.url, `http://${host}`);
+
+        if (config.checkHidden && hiddenCheck.test(url.pathname)) {
+            throw 404;
+        }
+
         for (var key in config.defaultHeaders) {
             res.setHeader(key, config.defaultHeaders[key]);
         }
@@ -117,18 +165,6 @@ http.createServer(async function (req, res) {
 
         if (req.method != 'GET' && req.method != 'HEAD') {
             throw 405;
-        }
-
-        let host = `${req.socket.localAddress}:${req.socket.localPort}`;
-
-        if (req.headers.host) {
-            host = req.headers.host;
-        }
-
-        url = new URL(req.url, `http://${host}`);
-
-        if (config.checkHidden && hiddenCheck.test(url.pathname)) {
-            throw 404;
         }
 
         let localPath = path.resolve(path.join(config.wwwroot, url.pathname));
@@ -248,20 +284,22 @@ http.createServer(async function (req, res) {
             }
         }
 
-        var end = Date.now();
-        var duration = end - start;
+        if (!config.noLog) {
+            var end = Date.now();
+            var duration = end - start;
 
-        console.log({
-            ts: new Date(start).toISOString(),
-            remoteAddress: req.socket.remoteAddress,
-            method: req.method,
-            url: url.toString(),
-            agent: req.headers['user-agent'],
-            statusCode: res.statusCode,
-            bytesRead: req.socket.bytesRead,
-            bytesWritten: req.socket.bytesWritten,
-            duration: duration,
-            error: error
-        });
+            sendLog({
+                ts: new Date(start).toISOString(),
+                remoteAddress: req.socket.remoteAddress,
+                method: req.method,
+                url: url.toString(),
+                agent: req.headers['user-agent'],
+                statusCode: res.statusCode,
+                bytesRead: req.socket.bytesRead,
+                bytesWritten: req.socket.bytesWritten,
+                duration: duration,
+                error: error
+            });
+        }
     }
 }).listen(config.port);
